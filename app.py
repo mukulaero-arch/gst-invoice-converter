@@ -11,145 +11,12 @@ import io
 st.set_page_config(page_title="GST Universal Converter Pro", page_icon="🧾", layout="wide")
 
 st.markdown("<h2 style='text-align: center; color: #1F4E79;'>🧾 Xenium Tyres - Universal GST Invoice to Excel & Google Sheets</h2>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: #555;'>सपोर्टेड: 1. Discount फॉर्मेट (Invoice 112) | 2. Multiprint फॉर्मेट | 3. Smart GST बिलिंग</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #555;'>सटीक डेटा एक्सट्रैक्टर: कोई गलत नाम नहीं, सटीक HSN और GSTR-1 सरकारी फॉर्मेट</p>", unsafe_allow_html=True)
 st.write("---")
 
-uploaded_pdf = st.file_uploader("📂 अपना इनवॉइस PDF यहाँ अपलोड करें", type=["pdf"])
+uploaded_pdf = st.file_uploader("📂 अपना इनवॉइस PDF यहाँ चुनें", type=["pdf"])
 
-def clean_num(s):
-    try:
-        val = re.sub(r'[^\d\.]', '', str(s))
-        return float(val) if val and val != '.' else 0.0
-    except:
-        return 0.0
-
-def sanitize_desc(desc):
-    desc = re.sub(r'^(?:[\(\)\%0-9\.\s]|PCS|NOS|-)+\s*', '', desc, flags=re.IGNORECASE)
-    desc = re.sub(r'[\(\)\%]+$', '', desc).strip()
-    return desc
-
-def parse_items_universal(text):
-    items = []
-    hsn_iter = list(re.finditer(r'\b(40\d{6})\b', text))
-    if not hsn_iter:
-        return items
-
-    bottom_hsn_idx = text.find("HSN/SAC Taxable Value")
-    if bottom_hsn_idx == -1:
-        bottom_hsn_idx = text.find("HSN / SAC\nTaxable Value")
-    if bottom_hsn_idx == -1:
-        bottom_hsn_idx = text.find("HSN / SAC")
-        if bottom_hsn_idx != -1 and bottom_hsn_idx < text.find("Sr."):
-            bottom_hsn_idx = -1
-
-    table_hsns = []
-    for h in hsn_iter:
-        if bottom_hsn_idx != -1 and h.start() >= bottom_hsn_idx:
-            continue
-        table_hsns.append(h)
-
-    for idx, h_match in enumerate(table_hsns):
-        hsn = int(h_match.group(1))
-        h_start = h_match.start()
-        h_end = h_match.end()
-
-        prev_end = table_hsns[idx-1].end() if idx > 0 else 0
-        desc_raw = text[prev_end:h_start]
-        lines = [l.strip() for l in desc_raw.split('\n') if l.strip()]
-        desc_parts = []
-        for l in lines:
-            if re.match(r'^\d+$', l) and len(l) <= 2: continue
-            if any(k in l for k in ["Xenium", "Tyres", "Ahraura", "Mirzapur", "231301", "Paura", "Kaimur", "Bihar", "NEAR", "WARD", "Kuddi", "Sr.", "No.", "Name of Product", "HSN", "Qty", "Rate", "Taxable Value", "Disc", "Total", "% Amount"]):
-                continue
-            desc_parts.append(l)
-        raw_desc = " ".join(desc_parts).strip()
-        item_desc = sanitize_desc(raw_desc) or f"Tyre / Tube Item {idx+1}"
-
-        next_start = table_hsns[idx+1].start() if idx + 1 < len(table_hsns) else len(text)
-        post_raw = text[h_end:next_start]
-        
-        for sw in ["Total", "CGST", "SGST", "Round off", "HSN/SAC", "HSN / SAC"]:
-            sw_pos = post_raw.find(sw)
-            if sw_pos != -1:
-                post_raw = post_raw[:sw_pos]
-
-        tokens = post_raw.split()
-        qty = 1.0
-        uqc = "PCS-PIECES"
-        rate = 0.0
-        taxable = 0.0
-        cgst_a = 0.0
-        sgst_a = 0.0
-        tot = 0.0
-
-        unit_idx = -1
-        for t_i, tok in enumerate(tokens):
-            if "PCS" in tok.upper():
-                uqc = "PCS-PIECES"
-                unit_idx = t_i
-                break
-            elif "NOS" in tok.upper():
-                uqc = "NOS-NUMBERS"
-                unit_idx = t_i
-                break
-
-        nums = []
-        for tok in tokens:
-            val = re.sub(r'[^\d\.]', '', tok)
-            if val and val != '.':
-                try:
-                    nums.append(float(val))
-                except:
-                    pass
-
-        if len(nums) > 0:
-            qty = nums[0]
-            rem_nums = nums[1:]
-        else:
-            rem_nums = []
-
-        if len(rem_nums) >= 7:
-            rate = rem_nums[0]
-            taxable = rem_nums[1]
-            cgst_a = rem_nums[3]
-            sgst_a = rem_nums[5]
-            tot = rem_nums[6]
-        elif len(rem_nums) >= 3:
-            rate = rem_nums[0]
-            taxable = rem_nums[2]
-            cgst_a = round(taxable * 0.09, 2)
-            sgst_a = round(taxable * 0.09, 2)
-            tot = round(taxable + cgst_a + sgst_a, 2)
-        elif len(rem_nums) == 2:
-            rate = rem_nums[0]
-            taxable = rem_nums[1]
-            cgst_a = round(taxable * 0.09, 2)
-            sgst_a = round(taxable * 0.09, 2)
-            tot = round(taxable + cgst_a + sgst_a, 2)
-        elif len(rem_nums) == 1:
-            taxable = rem_nums[0]
-            rate = taxable / qty if qty else taxable
-            cgst_a = round(taxable * 0.09, 2)
-            sgst_a = round(taxable * 0.09, 2)
-            tot = round(taxable + cgst_a + sgst_a, 2)
-
-        items.append({
-            'desc': item_desc,
-            'hsn': hsn,
-            'qty': qty,
-            'uqc': uqc,
-            'rate': rate,
-            'taxable': taxable,
-            'cgst_r': 9.0,
-            'cgst_a': cgst_a,
-            'sgst_r': 9.0,
-            'sgst_a': sgst_a,
-            'total': tot
-        })
-
-    return items
-
-def parse_pdf_document(file_bytes):
+def parse_pdf_document_v3(file_bytes):
     reader = pypdf.PdfReader(io.BytesIO(file_bytes))
     invoices = []
     
@@ -158,16 +25,19 @@ def parse_pdf_document(file_bytes):
         if not text or "TAX INVOICE" not in text:
             continue
             
+        # 1. सप्लायर GSTIN पहचानना
         seller_gstin = ""
         sg_m = re.search(r'GSTIN\s*[:\|\s]?\s*\n?\s*([0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})', text[:500])
         if sg_m:
             seller_gstin = sg_m.group(1)
 
+        # 2. इनवॉइस नंबर
         inv_no_m = re.search(r'Invoice\s*No\.?\s*[:\|\s]?\s*(\d+)', text)
         if not inv_no_m:
             inv_no_m = re.search(r'Invoice\s*No\.?\s*\n\s*(\d+)', text)
         inv_no = int(inv_no_m.group(1)) if inv_no_m else (page_idx + 1)
         
+        # 3. इनवॉइस दिनांक
         inv_date_m = re.search(r'Invoice\s*Date\s*[:\|\s]?\s*([0-9]{1,2}[\.\-\/][0-9A-Za-z]{2,3}[\.\-\/][0-9]{2,4})', text)
         if not inv_date_m:
             inv_date_m = re.search(r'Invoice\s*Date\s*\n\s*([0-9]{1,2}[\.\-\/][0-9A-Za-z]{2,3}[\.\-\/][0-9]{2,4})', text)
@@ -193,6 +63,7 @@ def parse_pdf_document(file_bytes):
             except:
                 inv_date = raw_d
 
+        # 4. ग्राहक विवरण और GSTIN
         cust_name = "Unregistered Consumer"
         cust_addr = ""
         cust_gstin = ""
@@ -210,14 +81,15 @@ def parse_pdf_document(file_bytes):
             nm = re.search(r'(?:Name|M\/S|MS\/)\s*[:\|\s]?\s*\n?\s*([^\n]+)', cb, re.IGNORECASE)
             if nm:
                 c_cand = nm.group(1).strip()
-                if not any(k in c_cand.lower() for k in ["address", "phone", "gstin", "customer"]):
+                if not any(k in c_cand.lower() for k in ["address", "phone", "gstin", "customer", "place of", "due date"]):
                     cust_name = c_cand
                     
             ad = re.search(r'Address\s*[:\|\s]?\s*\n?\s*([^\n]+(?:\n\s*[^\n]+)?)', cb, re.IGNORECASE)
             if ad:
-                lines = [l.strip() for l in ad.group(1).split('\n') if l.strip() and not any(k in l.lower() for k in ['phone', 'gstin', 'place of'])]
+                lines = [l.strip() for l in ad.group(1).split('\n') if l.strip() and not any(k in l.lower() for k in ['phone', 'gstin', 'place of', 'pan'])]
                 cust_addr = " ".join(lines)
 
+        # 5. सप्लाई का राज्य (Place of Supply)
         pos_m = re.search(r'Place of\s*Supply\s*[:\|\s]?\s*\n?\s*([^\n\(\)]+)\s*(?:\(\s*(\d+)\s*\))?', text)
         if pos_m:
             st_name = pos_m.group(1).strip()
@@ -231,6 +103,7 @@ def parse_pdf_document(file_bytes):
             else:
                 pos = st_name
 
+        # 6. बिल के कुल योग
         taxable_m = re.search(r'Taxable Amount\s*[:\|\s]?\s*\n?\s*([\d,\.]+)', text)
         cgst_m = re.search(r'Add\s*:\s*CGST\s*[:\|\s]?\s*\n?\s*([\d,\.]+)', text)
         sgst_m = re.search(r'Add\s*:\s*SGST\s*[:\|\s]?\s*\n?\s*([\d,\.]+)', text)
@@ -238,12 +111,91 @@ def parse_pdf_document(file_bytes):
         if not tot_m:
             tot_m = re.search(r'Total\s*\n?\s*[\d\.]+\s*(?:PCS|NOS)\s*\n?\s*[\d,\.]+\s*\n?\s*[₹\s]*([\d,\.]+)', text)
 
-        taxable_val = clean_num(taxable_m.group(1)) if taxable_m else 0.0
-        cgst_val = clean_num(cgst_m.group(1)) if cgst_m else 0.0
-        sgst_val = clean_num(sgst_m.group(1)) if sgst_m else 0.0
-        tot_val = clean_num(tot_m.group(1)) if tot_m else 0.0
+        taxable_val = float(re.sub(r'[^\d\.]', '', taxable_m.group(1))) if taxable_m else 0.0
+        cgst_val = float(re.sub(r'[^\d\.]', '', cgst_m.group(1))) if cgst_m else 0.0
+        sgst_val = float(re.sub(r'[^\d\.]', '', sgst_m.group(1))) if sgst_m else 0.0
+        tot_val = float(re.sub(r'[^\d\.]', '', tot_m.group(1))) if tot_m else 0.0
 
-        items = parse_items_universal(text)
+        # 7. आइटम टेबल की सटीक सीमा (Strict Item Boundaries)
+        m_tbl_start = re.search(r'Sr\.?\s*\n?\s*No\.?', text)
+        items = []
+        if m_tbl_start:
+            tbl_start_idx = m_tbl_start.start()
+            m_tbl_end = re.search(r'\n\s*Total\s*\n?\s*[\d\.,]+\s*(?:PCS|NOS)', text[tbl_start_idx:], re.IGNORECASE)
+            if m_tbl_end:
+                tbl_end_idx = tbl_start_idx + m_tbl_end.start()
+            else:
+                m_tbl_end2 = re.search(r'\n\s*(?:HSN\s*/?\s*SAC|Taxable\s*Amount|Total\s*in\s*words)', text[tbl_start_idx:], re.IGNORECASE)
+                tbl_end_idx = tbl_start_idx + m_tbl_end2.start() if m_tbl_end2 else len(text)
+
+            tbl_text = text[tbl_start_idx:tbl_end_idx]
+
+            m_first = re.search(r'(?:^|\n)\s*1\s*(?:\n|\s+[A-Za-z])', tbl_text)
+            if m_first:
+                items_body = tbl_text[m_first.start():]
+                item_blocks = re.split(r'\n(?=[1-9]\d?\s*(?:\n|\s+[A-Za-z]))', items_body)
+                for b in item_blocks:
+                    b = b.strip()
+                    if not b: continue
+                    hsn_m = re.search(r'\b(40\d{6})\b', b)
+                    if not hsn_m: continue
+                    hsn = int(hsn_m.group(1))
+
+                    desc_raw = b[:hsn_m.start()].strip()
+                    desc_clean = re.sub(r'^\d+\s*\n\s*', '', desc_raw)
+                    desc_clean = re.sub(r'^\d+\s+(?=[A-Za-z])', '', desc_clean)
+                    desc_clean = " ".join([l.strip() for l in desc_clean.split('\n') if l.strip()])
+                    desc_clean = re.sub(r'^(?:Xenium\s*Tyres|NEAR|WARD|PO\.|Kaimur|Bihar|Mirzapur|Ahraura|\([0-9\.]+\s*%\)|[\,\s\(\)\%]+)+', '', desc_clean, flags=re.IGNORECASE).strip()
+
+                    after_hsn = b[hsn_m.end():].strip()
+                    for stop_w in ["Total", "CGST", "SGST", "Round off", "HSN/SAC", "HSN / SAC"]:
+                        sp = after_hsn.find(stop_w)
+                        if sp != -1:
+                            after_hsn = after_hsn[:sp]
+                    
+                    uqc = "NOS-NUMBERS" if "NOS" in after_hsn.upper() else "PCS-PIECES"
+                    tokens = after_hsn.split()
+                    nums = []
+                    for tok in tokens:
+                        val = re.sub(r'[^\d\.]', '', tok)
+                        if val and val != '.':
+                            try: nums.append(float(val))
+                            except: pass
+                    
+                    qty = nums[0] if len(nums) > 0 else 1.0
+                    rem = nums[1:] if len(nums) > 0 else []
+                    rate, taxable, cgst_a, sgst_a, item_tot = 0.0, 0.0, 0.0, 0.0, 0.0
+                    
+                    if len(rem) >= 7:
+                        rate, taxable, cgst_a, sgst_a, item_tot = rem[0], rem[1], rem[3], rem[5], rem[6]
+                    elif len(rem) >= 3:
+                        rate, taxable = rem[0], rem[2]
+                        cgst_a, sgst_a = round(taxable * 0.09, 2), round(taxable * 0.09, 2)
+                        item_tot = round(taxable + cgst_a + sgst_a, 2)
+                    elif len(rem) == 2:
+                        rate, taxable = rem[0], rem[1]
+                        cgst_a, sgst_a = round(taxable * 0.09, 2), round(taxable * 0.09, 2)
+                        item_tot = round(taxable + cgst_a + sgst_a, 2)
+                    elif len(rem) == 1:
+                        taxable = rem[0]
+                        rate = taxable / qty if qty else taxable
+                        cgst_a, sgst_a = round(taxable * 0.09, 2), round(taxable * 0.09, 2)
+                        item_tot = round(taxable + cgst_a + sgst_a, 2)
+
+                    items.append({
+                        'desc': desc_clean or f"Item (HSN {hsn})",
+                        'hsn': hsn,
+                        'qty': qty,
+                        'uqc': uqc,
+                        'rate': rate,
+                        'taxable': taxable,
+                        'cgst_r': 9.0,
+                        'cgst_a': cgst_a,
+                        'sgst_r': 9.0,
+                        'sgst_a': sgst_a,
+                        'total': item_tot
+                    })
+
         if taxable_val == 0.0 and items:
             taxable_val = round(sum(it['taxable'] for it in items), 2)
         if tot_val == 0.0 and items:
@@ -262,10 +214,10 @@ def parse_pdf_document(file_bytes):
             'tot_val': tot_val,
             'items': items
         })
-        
+
     return invoices
 
-def generate_full_gstr1_excel(invoices):
+def generate_gstr1_excel_exact(invoices):
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
     
@@ -304,7 +256,7 @@ def generate_full_gstr1_excel(invoices):
         pos_b2c = b2c_invs[0]['pos'] if b2c_invs else '09-Uttar Pradesh'
         ws_b2cs.append(['OE', pos_b2c, None, 18.0, tot_b2c_tax, 0.0, None])
 
-    # 4 & 5. HSN Sheets
+    # 4 & 5. HSN Sheets (Grouped by HSN and UQC)
     def add_hsn_sheet(sheet_name, inv_list):
         ws = wb.create_sheet(sheet_name)
         ws.append(['Summary For HSN(12)'] + [None]*8 + ['HELP', None])
@@ -345,9 +297,9 @@ def generate_full_gstr1_excel(invoices):
     ws_docs.append(['Nature of Document', 'Sr. No. From', 'Sr. No. To', 'Total Number', 'Cancelled'])
     ws_docs.append(['Invoices for outward supply', min(inv_nums) if inv_nums else 1, max(inv_nums) if inv_nums else len(inv_nums), len(inv_nums), 0])
 
-    # 7. Invoice_Register
+    # 7. विस्तृत रजिस्टर शीट (Invoice_Register)
     ws_reg = wb.create_sheet('Invoice_Register')
-    headers = ['Invoice No', 'Date', 'Customer Name', 'Address', 'GSTIN', 'Place Of Supply', 'Item Description', 'HSN', 'Qty', 'Unit', 'Rate', 'Taxable Value', 'CGST', 'SGST', 'Total']
+    headers = ['Invoice No', 'Date', 'Customer Name', 'Address', 'GSTIN', 'Place Of Supply', 'Item Description', 'HSN', 'Qty', 'Unit', 'Rate', 'Taxable Value', 'CGST Amount', 'SGST Amount', 'Total Amount']
     ws_reg.append(headers)
     for c in range(1, len(headers)+1):
         cell = ws_reg.cell(1, c)
@@ -368,12 +320,12 @@ def generate_full_gstr1_excel(invoices):
 
 if uploaded_pdf and st.button("🚀 Convert to GSTR-1 Excel & Google Sheets", type="primary", use_container_width=True):
     with st.spinner("PDF से बिल डेटा स्कैन और प्रोसेस किया जा रहा है..."):
-        invoices = parse_pdf_document(uploaded_pdf.read())
+        invoices = parse_pdf_document_v3(uploaded_pdf.read())
         
         if not invoices:
             st.error("कोई बिल नहीं पढ़ा जा सका। कृपया सही इनवॉइस PDF चुनें।")
         else:
-            wb = generate_full_gstr1_excel(invoices)
+            wb = generate_gstr1_excel_exact(invoices)
             
             excel_buffer = io.BytesIO()
             wb.save(excel_buffer)
